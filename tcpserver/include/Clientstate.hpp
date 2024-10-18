@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include <unordered_map>
 
 namespace tcpserver
 {
@@ -12,9 +13,56 @@ namespace tcpserver
         std::string sendBuffer;
 
         std::string recvBuffer;
-        Clientstate() : client_fd(-1) {}
+
+        bool isCompleteRequestRecieved;
+
+        bool isCompleteHeadersRecieved;
+
+        std::string httpMethod;
+
+        std::string httpVersion;
+
+        std::string httpResourcePath;
+
+        std::unordered_map<std::string, std::string> headers;
+
+        std::string payload_data;
+
+        int contentLenghtOfMessage;
+
+        int bytesSent;
+
+        Clientstate() : client_fd(-1)
+        {
+        }
+
         Clientstate(int iFD) : client_fd(iFD)
         {
+        }
+
+        void clear()
+        {
+            sendBuffer.clear();
+
+            recvBuffer.clear();
+
+            isCompleteRequestRecieved = false;
+
+            isCompleteHeadersRecieved = false;
+
+            httpMethod.clear();
+
+            httpVersion.clear();
+
+            httpResourcePath.clear();
+
+            headers.clear();
+
+            payload_data.clear();
+
+            contentLenghtOfMessage = 0;
+
+            bytesSent = 0;
         }
     };
 

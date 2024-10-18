@@ -20,12 +20,22 @@ namespace tcpserver
 
         std::thread _inboundOutboundThread;
 
+        std::function<void(Clientstate &iClientState)> _recieveCallback;
+
+        std::function<void(int)> _listenCallback;
+
+        bool isRequestComplete(int iClientFD);
+
     public:
         TCPServer();
 
         void initialize(int iPort, std::string iIPAddress);
 
         void start();
+
+        void setRecieveCallback(std::function<void(Clientstate &iClientState)> iRecieveCallback);
+
+        void setListenCallback(std::function<void(int)> iListenCallback);
 
         void handleInboundOutbound();
 

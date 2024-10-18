@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <sys/epoll.h>
 #include <fcntl.h>
+#include <sstream>
 #include "../include/Clientstate.hpp"
 
 namespace tcpserver
@@ -27,6 +28,39 @@ namespace tcpserver
                 throw std::runtime_error(errorMessage);
             }
         }
+
+        void parseRequest(tcpserver::Clientstate &oClientState, std::string iRequestLine)
+        {
+            //@ stream uses space as default delimitier
+            std::istringstream requestStream(iRequestLine);
+            requestStream >> oClientState.httpMethod;
+            requestStream >> oClientState.httpResourcePath;
+            requestStream >> oClientState.httpVersion;
+        }
+
+        void parseHeaders(tcpserver::Clientstate &oClientState, std::string iHeaderData)
+        {
+            std::istringstream stream(iHeaderData);
+            std::string line;
+            size_t content_length = 0;
+
+            // Parse each line of the headers
+            while (std::getline(stream, line) && line != "\r")
+            {
+                if (line.find(": ") != std::string::npos)
+                {
+                    auto pos = line.find(": ");
+                    std::string key = line.substr(0, pos);
+                    std::string value = line.substr(pos + 2);
+                    oClientState.headers[key] = value;
+
+                    if (key == "Content-Length")
+                    {
+                        oClientState.contentLenghtOfMessage = std::stoul(value);
+                    }
+                }
+            }
+        }
     }
 
     TCPServer::TCPServer() : _serverFD(-1), _threadPool(5) /*thread pool size can also be determined by based on the hardware concurrency for better optimization*/
@@ -39,6 +73,16 @@ namespace tcpserver
         {
             close(_serverFD);
         }
+    }
+
+    void TCPServer::setRecieveCallback(std::function<void(Clientstate &iClientState)> iRecieveCallback)
+    {
+        _recieveCallback = iRecieveCallback;
+    }
+
+    void TCPServer::setListenCallback(std::function<void(int)> iListenCallback)
+    {
+        this->_listenCallback = iListenCallback;
     }
 
     void TCPServer::initialize(int iPort, std::string iIPAddress)
@@ -88,11 +132,18 @@ namespace tcpserver
         }
 
         std::cout << "epoll creation is done - File descriptor " << _epollFD << std::endl;
+
+        _inboundOutboundThread = std::thread(&TCPServer::handleInboundOutbound, this);
+        _inboundOutboundThread.detach();
+
+        std::cout << "started the thread in a zombie mode to handle the epoll events, thread id" << _inboundOutboundThread.get_id() << std::endl;
+
+        if (_listenCallback)
+            _listenCallback(_serverFD);
     }
 
     void TCPServer::start()
     {
-        _inboundOutboundThread = std::thread(&TCPServer::handleInboundOutbound, this);
 
         struct sockaddr_in client_address;
         socklen_t addrlen = sizeof(client_address);
@@ -128,9 +179,66 @@ namespace tcpserver
         }
     }
 
+    bool TCPServer::isRequestComplete(int iClientFD)
+    {
+        auto &clientState = _clientsState[iClientFD];
+
+        if (!clientState.isCompleteHeadersRecieved)
+        {
+            //@ look for the end of the headers
+            //@ take that data out of recieved buffer
+            //@ then parse the headeders [Version, path, method, content-length...]
+
+            //@ In HTTP Messagess,
+            //@ 1. \r\n marks the EOL
+            //@ 2. \r\n\r\n marks the end of the headers and the rest of the buffer is the payload/body
+            size_t headerEndPos = clientState.recvBuffer.find("\r\n\r\n");
+
+            if (headerEndPos != std::string::npos)
+            {
+                //@ end of the headers is found
+                //@ slice the headers from the complete message
+                std::string headers_data = clientState.recvBuffer.substr(0, headerEndPos + 4);
+                clientState.recvBuffer.erase(0, headerEndPos + 4);
+
+                //@ first line in the HTTP message is the METHOD RESOURCEPATH VERSION
+                size_t endOfRequestLine = headers_data.find("\r\n");
+                std::string requestLine = headers_data.substr(0, endOfRequestLine);
+                parseRequest(clientState, requestLine);
+
+                std::string headers = headers_data.substr(endOfRequestLine + 2);
+                parseHeaders(clientState, headers);
+
+                clientState.isCompleteHeadersRecieved = true;
+            }
+        }
+        else if (clientState.isCompleteHeadersRecieved && clientState.contentLenghtOfMessage > 0)
+        {
+            if (clientState.recvBuffer.size() >= clientState.contentLenghtOfMessage)
+            {
+                // Full body received, process the complete request
+                clientState.payload_data = clientState.recvBuffer.substr(0, clientState.contentLenghtOfMessage);
+                clientState.recvBuffer.erase(0, clientState.contentLenghtOfMessage); // Remove the body from the buffer
+
+                // Call the callback with the complete data (headers + body)
+                clientState.isCompleteRequestRecieved = true;
+                return true;
+            }
+        }
+        else if (clientState.isCompleteHeadersRecieved && clientState.contentLenghtOfMessage == 0)
+        {
+            //@ No body (i.e., only headers), process the request now
+            //@ for GET DELETE methods...
+            clientState.isCompleteRequestRecieved = true;
+            return true;
+        }
+
+        return false;
+    }
+
     void TCPServer::handleRecv(int iClientFd)
     {
-        std::cout << "TCPServer::handleRecv fd" << iClientFd << std::endl;
+        std::cout << "TCPServer::handleRecv, Message from Client fd" << iClientFd << std::endl;
 
         auto &clientState = _clientsState[iClientFd];
 
@@ -138,23 +246,99 @@ namespace tcpserver
 
         int bytesRead = recv(iClientFd, readBuffer, 1024, 0);
 
-        clientState.recvBuffer = readBuffer;
+        // clientState.recvBuffer = readBuffer;
 
         std::cout << "Number of bytes read " << bytesRead << std::endl;
 
-        std::cout << "Message from Client " << iClientFd << " is " << clientState.recvBuffer << std::endl;
+        if (bytesRead > 0)
+        {
+            //@ message
+            clientState.recvBuffer.append(readBuffer, bytesRead);
+
+            if (isRequestComplete(clientState.client_fd))
+            {
+                //@ call the HTTP layer to process the request
+                _recieveCallback(clientState);
+            }
+        }
+        else if (bytesRead == 0)
+        {
+            //@ received on when client closes the connection
+            //@ perform the clean
+            std::cout << "Client disconnected, FD" << clientState.client_fd << std::endl;
+
+            close(clientState.client_fd);
+
+            _clientsState.erase(clientState.client_fd);
+        }
+        else
+        {
+            //@ recieved when there is drop of the message or some kernel error
+            //! we try again to read the kernel buffer (as the message would be already be in the kernel buffer)
+            if (errno != EWOULDBLOCK && errno != EAGAIN)
+            {
+                std::cerr << "Error in recv: " << strerror(errno) << std::endl;
+
+                handleError(clientState.client_fd);
+            }
+            else
+            {
+                //@ more data to be received
+                return;
+            }
+        }
     }
 
     void TCPServer::handleSend(int iClientFd)
     {
-        //  sending data
-        std::string st;
-        std::getline(std::cin, st);
-        send(iClientFd, st.c_str(), st.size(), 0);
+        auto &clientState = _clientsState[iClientFd];
+
+        if (clientState.bytesSent < clientState.sendBuffer.size())
+        {
+            size_t bytesToBeSent = clientState.sendBuffer.size() - clientState.bytesSent;
+
+            size_t bytesSent = send(iClientFd, clientState.sendBuffer.c_str() + clientState.bytesSent, bytesToBeSent, 0);
+
+            if (bytesToBeSent > 0)
+            {
+                clientState.bytesSent += bytesSent;
+
+                if (clientState.bytesSent == clientState.sendBuffer.size())
+                {
+                    // If all data has been sent, reset the state
+                    std::cout << "All data sent to client." << std::endl;
+
+                    // making http as stateless protocol. remove from the states map
+                    clientState.clear();
+                }
+            }
+            else
+            {
+                if (errno == EAGAIN || errno == EWOULDBLOCK)
+                {
+                    // wait for the next opportunity to send
+                    return;
+                }
+                else
+                {
+                    // An error occurred, handle it
+                    std::cerr << "Error in send." << std::endl;
+                    handleError(iClientFd);
+                }
+            }
+        }
     }
 
     void TCPServer::handleError(int iClientFd)
     {
+        // Clean up state on error
+        auto &clientState = _clientsState[iClientFd];
+
+        std::cerr << "Socket error, closing connection for client FD" << clientState.client_fd << std::endl;
+
+        close(clientState.client_fd);
+
+        _clientsState.erase(clientState.client_fd);
     }
 
     void TCPServer::handleInboundOutbound()

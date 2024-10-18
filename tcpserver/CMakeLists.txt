@@ -1,21 +1,15 @@
-cmake_minimum_required(VERSION 3.20)
+project(tcpserver)
 
-# Set the project name and version
-project(tcpserver VERSION 1.0)
+# Include the OS-specific implementation
+if(WIN32)
+    set(SERVER_OS_SRC win/win.cpp)
+elseif(UNIX AND NOT APPLE)
+    set(SERVER_OS_SRC src/TCPServer.cpp)
+elseif(APPLE)
+    set(SERVER_OS_SRC mac/mac.cpp)
+endif()
 
-# Specify the C++ standard
-set(CMAKE_CXX_STANDARD 14)
-set(CMAKE_CXX_STANDARD_REQUIRED True)
+# Add tcpserver.cpp
+add_library(tcpserver STATIC ${SERVER_OS_SRC})
 
-set(SOURCES
-src/TCPServer.cpp
-src/main.cpp
-)
-
-set(INCLUDES
-include/Clientstate.hpp
-include/ctpl_stl.h
-include/TCPServer.hpp
-)
-
-add_executable(tcpserver ${SOURCES} ${INCLUDES})
+target_include_directories(tcpserver PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
