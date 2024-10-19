@@ -6,17 +6,11 @@ using namespace std;
 
 int main()
 {
-    // Create the TCP server using the factory function
     const int PORT = 8000;
     httpserver::HTTPServer *server = new httpserver::HTTPServer();
 
     if (server)
     {
-        // Initialize the server with a specific port and (optional) IP address
-        // server->initialize(8080);  // Default is localhost if no IP is provided
-
-        std::cout << "Server initialized." << std::endl;
-
         // Start the server
         server->registerURL("/users", [](httpserver::HTTPRequest &req, httpserver::HTTPResponse &res)
                             {
@@ -32,11 +26,11 @@ int main()
             .registerURL("/index.html", [](httpserver::HTTPRequest &req, httpserver::HTTPResponse &res)
                          {
                      cout << "send the index.html file" << endl;
-                     res.sendFile("./applications" + req.getPath()); })
+                     res.sendFile("../applications" + req.getPath()); })
             .registerURL("/tictactoe.html", [](httpserver::HTTPRequest &req, httpserver::HTTPResponse &res)
                          {
                      cout << "send the index.html file" << endl;
-                     res.sendFile("./applications" + req.getPath()); })
+                     res.sendFile("../applications" + req.getPath()); })
             .registerURL("/users", [](httpserver::HTTPRequest &req, httpserver::HTTPResponse &res)
                          {
                      cout << "send all the shops from thsi route" << endl;

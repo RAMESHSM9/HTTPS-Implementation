@@ -32,11 +32,11 @@ namespace tcpserver
 
         int bytesSent;
 
-        Clientstate() : client_fd(-1)
+        Clientstate() : client_fd(-1), isCompleteRequestRecieved(false), isCompleteHeadersRecieved(false), contentLenghtOfMessage(0), bytesSent(0)
         {
         }
 
-        Clientstate(int iFD) : client_fd(iFD)
+        Clientstate(int iFD) : client_fd(iFD), isCompleteRequestRecieved(false), isCompleteHeadersRecieved(false), contentLenghtOfMessage(0), bytesSent(0)
         {
         }
 

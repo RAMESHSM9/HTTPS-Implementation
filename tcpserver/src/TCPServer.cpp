@@ -212,7 +212,8 @@ namespace tcpserver
                 clientState.isCompleteHeadersRecieved = true;
             }
         }
-        else if (clientState.isCompleteHeadersRecieved && clientState.contentLenghtOfMessage > 0)
+
+        if (clientState.isCompleteHeadersRecieved && clientState.contentLenghtOfMessage > 0)
         {
             if (clientState.recvBuffer.size() >= clientState.contentLenghtOfMessage)
             {
